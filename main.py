@@ -58,12 +58,25 @@ def is_elf(filepath):
 def get_pe_info(filepath):
     try:
         pe = pefile.PE(filepath)
+        iat_funcs = []
+        if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT'):
+            for entry in getattr(pe, 'DIRECTORY_ENTRY_IMPORT', []):
+                for imp in entry.imports:
+                    if imp.name:
+                        if isinstance(imp.name, bytes):
+                            func_name = imp.name.decode(errors='ignore')
+                        else:
+                            func_name = str(imp.name)
+                        iat_funcs.append(func_name)
+        # 중복만 제거, 순서는 유지, 최대 30개로 제한
+        iat_funcs = list(dict.fromkeys(iat_funcs))[:30]
         return {
             "pe_machine": hex(pe.FILE_HEADER.Machine),
             "pe_entrypoint": hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint),
             "pe_sections": len(pe.sections),
+            "iat_functions": ' '.join(iat_funcs)
         }
-    except:
+    except Exception as e:
         return {}
 
 
@@ -145,16 +158,6 @@ def main():
     parser.add_argument(
         "--keep", action="store_true", help="이전 결과를 유지(append)할지 여부"
     )
-    parser.add_argument(
-        "--export-hash-list",
-        choices=["md5", "sha256"],
-        help="수집된 결과에서 해시 리스트만 추출(md5/sha256)",
-    )
-    parser.add_argument(
-        "--whitelist",
-        type=str,
-        help="화이트리스트 해시 파일 경로(sha256 또는 md5, 한 줄에 하나씩)",
-    )
     args = parser.parse_args()
 
     binaries_dir = os.path.join(os.path.dirname(__file__), "binaries")
@@ -162,18 +165,6 @@ def main():
     os.makedirs(db_dir, exist_ok=True)
     if not args.no_collect:
         os.makedirs(binaries_dir, exist_ok=True)
-
-    whitelist_set = set()
-    if args.whitelist:
-        try:
-            with open(args.whitelist, "r", encoding="utf-8") as f:
-                for line in f:
-                    h = line.strip()
-                    if h:
-                        whitelist_set.add(h.lower())
-        except Exception as e:
-            print(f"화이트리스트 파일을 읽는 중 오류 발생: {e}")
-            return
 
     files = collect_files(args.paths, only_exec=not args.all)
     results = []
@@ -192,11 +183,6 @@ def main():
             md5, sha256 = get_file_hashes(filepath)
             info["md5"] = md5
             info["sha256"] = sha256
-            # 화이트리스트에 있으면 건너뜀
-            if whitelist_set and (
-                md5.lower() in whitelist_set or sha256.lower() in whitelist_set
-            ):
-                continue
         except Exception as e:
             info["md5"] = None
             info["sha256"] = None
@@ -232,17 +218,6 @@ def main():
                     save_file(filepath, info["sha256"], binaries_dir)
             except Exception as e:
                 info["save_error"] = str(e)
-
-    # 해시 리스트만 추출하는 기능
-    if args.export_hash_list:
-        hash_col = args.export_hash_list
-        hashlist_path = os.path.join(db_dir, f"hashlist_{hash_col}.txt")
-        hashes = [info.get(hash_col) for info in results if info.get(hash_col)]
-        with open(hashlist_path, "w", encoding="utf-8") as f:
-            for h in hashes:
-                f.write(h + "\n")
-        print(f"{hash_col} 해시 리스트가 {hashlist_path}에 저장되었습니다.")
-        return
 
     df = pd.DataFrame(results)
     if len(df) == 0:
