@@ -63,12 +63,18 @@ def get_pe_info(filepath):
             for entry in getattr(pe, 'DIRECTORY_ENTRY_IMPORT', []):
                 for imp in entry.imports:
                     if imp.name:
-                        iat_funcs.append(imp.name.decode(errors='ignore'))
+                        if isinstance(imp.name, bytes):
+                            func_name = imp.name.decode(errors='ignore')
+                        else:
+                            func_name = str(imp.name)
+                        iat_funcs.append(func_name)
+        # 중복 제거 및 정렬
+        iat_funcs = sorted(set(iat_funcs))
         return {
             "pe_machine": hex(pe.FILE_HEADER.Machine),
             "pe_entrypoint": hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint),
             "pe_sections": len(pe.sections),
-            "iat_functions": ','.join(iat_funcs)
+            "iat_functions": ' '.join(iat_funcs)
         }
     except Exception as e:
         return {}
