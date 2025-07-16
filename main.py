@@ -162,6 +162,11 @@ def main():
             "filename": os.path.basename(filepath),
         }
         try:
+            info["size"] = os.path.getsize(filepath)
+        except Exception as e:
+            info["size"] = None
+            info["size_error"] = str(e)
+        try:
             md5, sha256 = get_file_hashes(filepath)
             info["md5"] = md5
             info["sha256"] = sha256
