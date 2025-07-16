@@ -175,6 +175,11 @@ def main():
                 info["save_error"] = str(e)
 
     df = pd.DataFrame(results)
+    if len(df) == 0:
+        print(
+            "\n수집된 파일이 없습니다. (실행파일이 없거나, 조건에 맞는 파일이 없습니다)"
+        )
+        return
     if args.db == "csv":
         csv_path = os.path.join(db_dir, "database.csv")
         file_exists = os.path.exists(csv_path)
