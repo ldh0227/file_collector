@@ -90,13 +90,31 @@ def get_magic_type(filepath):
 
 def collect_files(paths, only_exec):
     file_list = []
+    # 제외할 경로/파일(절대경로)
+    script_path = os.path.abspath(__file__)
+    binaries_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "binaries"))
+    database_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "database"))
+    exclude_prefixes = [binaries_dir, database_dir]
     for path in paths:
         if os.path.isfile(path):
+            abspath = os.path.abspath(path)
+            if abspath == script_path:
+                continue
+            if any(abspath.startswith(prefix) for prefix in exclude_prefixes):
+                continue
             file_list.append(path)
         else:
             for root, _, files in os.walk(path):
+                abroot = os.path.abspath(root)
+                if abroot == binaries_dir or abroot == database_dir:
+                    continue
                 for file in files:
                     full_path = os.path.join(root, file)
+                    abspath = os.path.abspath(full_path)
+                    if abspath == script_path:
+                        continue
+                    if any(abspath.startswith(prefix) for prefix in exclude_prefixes):
+                        continue
                     if only_exec:
                         if is_pe(full_path) or is_elf(full_path):
                             file_list.append(full_path)
