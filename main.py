@@ -130,7 +130,59 @@ def save_file(src, sha256, binaries_dir):
     shutil.copy2(src, dst)
 
 
+def process_file(filepath, binaries_dir, no_collect):
+    info = {
+        "filepath": filepath,
+        "filename": os.path.basename(filepath),
+    }
+    try:
+        info["size"] = os.path.getsize(filepath)
+    except Exception as e:
+        info["size"] = None
+        info["size_error"] = str(e)
+    try:
+        md5, sha256 = get_file_hashes(filepath)
+        info["md5"] = md5
+        info["sha256"] = sha256
+    except Exception as e:
+        info["md5"] = None
+        info["sha256"] = None
+        info["hash_error"] = str(e)
+    try:
+        filetype = get_magic_type(filepath)
+        info["filetype"] = filetype
+    except Exception as e:
+        info["filetype"] = None
+        info["filetype_error"] = str(e)
+    try:
+        entropy = calc_entropy(filepath)
+        info["entropy"] = entropy
+    except Exception as e:
+        info["entropy"] = None
+        info["entropy_error"] = str(e)
+    try:
+        if is_pe(filepath):
+            info["type"] = "PE"
+            info.update(get_pe_info(filepath))
+        elif is_elf(filepath):
+            info["type"] = "ELF"
+            info.update(get_elf_info(filepath))
+        else:
+            info["type"] = info.get("filetype", "UNKNOWN")
+    except Exception as e:
+        info["type"] = info.get("filetype", "UNKNOWN")
+        info["type_error"] = str(e)
+    if not no_collect:
+        try:
+            if info.get("sha256"):
+                save_file(filepath, info["sha256"], binaries_dir)
+        except Exception as e:
+            info["save_error"] = str(e)
+    return info
+
+
 def main():
+    import concurrent.futures
     parser = argparse.ArgumentParser()
     parser.add_argument("paths", nargs="+", help="수집할 경로(들)")
     parser.add_argument(
@@ -147,6 +199,8 @@ def main():
     )
     args = parser.parse_args()
 
+    print("\n[실행] 파일 수집을 시작합니다...\n")
+
     binaries_dir = os.path.join(os.path.dirname(__file__), "binaries")
     db_dir = os.path.join(os.path.dirname(__file__), "database")
     os.makedirs(db_dir, exist_ok=True)
@@ -156,55 +210,10 @@ def main():
     files = collect_files(args.paths, only_exec=not args.all)
     results = []
 
-    for filepath in tqdm(files, desc="파일 수집 중"):
-        info = {
-            "filepath": filepath,
-            "filename": os.path.basename(filepath),
-        }
-        try:
-            info["size"] = os.path.getsize(filepath)
-        except Exception as e:
-            info["size"] = None
-            info["size_error"] = str(e)
-        try:
-            md5, sha256 = get_file_hashes(filepath)
-            info["md5"] = md5
-            info["sha256"] = sha256
-        except Exception as e:
-            info["md5"] = None
-            info["sha256"] = None
-            info["hash_error"] = str(e)
-        try:
-            filetype = get_magic_type(filepath)
-            info["filetype"] = filetype
-        except Exception as e:
-            info["filetype"] = None
-            info["filetype_error"] = str(e)
-        try:
-            entropy = calc_entropy(filepath)
-            info["entropy"] = entropy
-        except Exception as e:
-            info["entropy"] = None
-            info["entropy_error"] = str(e)
-        try:
-            if is_pe(filepath):
-                info["type"] = "PE"
-                info.update(get_pe_info(filepath))
-            elif is_elf(filepath):
-                info["type"] = "ELF"
-                info.update(get_elf_info(filepath))
-            else:
-                info["type"] = info.get("filetype", "UNKNOWN")
-        except Exception as e:
-            info["type"] = info.get("filetype", "UNKNOWN")
-            info["type_error"] = str(e)
-        results.append(info)
-        if not args.no_collect:
-            try:
-                if info.get("sha256"):
-                    save_file(filepath, info["sha256"], binaries_dir)
-            except Exception as e:
-                info["save_error"] = str(e)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(process_file, filepath, binaries_dir, args.no_collect) for filepath in files]
+        for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="파일 수집 중"):
+            results.append(f.result())
 
     df = pd.DataFrame(results)
     if len(df) == 0:
