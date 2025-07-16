@@ -79,6 +79,15 @@ def get_elf_info(filepath):
         return {}
 
 
+def get_magic_type(filepath):
+    try:
+        with open(filepath, "rb") as f:
+            buf = f.read(2048)
+        return magic.from_buffer(buf)
+    except Exception as e:
+        return None
+
+
 def collect_files(paths, only_exec):
     file_list = []
     for path in paths:
@@ -143,7 +152,7 @@ def main():
             info["sha256"] = None
             info["hash_error"] = str(e)
         try:
-            filetype = magic.from_file(filepath)
+            filetype = get_magic_type(filepath)
             info["filetype"] = filetype
         except Exception as e:
             info["filetype"] = None
