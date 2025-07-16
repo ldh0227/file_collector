@@ -115,6 +115,9 @@ def main():
     parser.add_argument(
         "--db", choices=["csv", "sqlite"], default="csv", help="정보 저장 방식"
     )
+    parser.add_argument(
+        "--keep", action="store_true", help="이전 결과를 유지(append)할지 여부"
+    )
     args = parser.parse_args()
 
     binaries_dir = os.path.join(os.path.dirname(__file__), "binaries")
@@ -155,11 +158,28 @@ def main():
 
     df = pd.DataFrame(results)
     if args.db == "csv":
-        df.to_csv(os.path.join(db_dir, "database.csv"), index=False)
+        csv_path = os.path.join(db_dir, "database.csv")
+        file_exists = os.path.exists(csv_path)
+        if args.keep and file_exists:
+            df.to_csv(csv_path, mode="a", header=False, index=False)
+        else:
+            df.to_csv(csv_path, index=False)
     else:
-        conn = sqlite3.connect(os.path.join(db_dir, "database.sqlite"))
-        df.to_sql("files", conn, if_exists="replace", index=False)
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sha256 ON files(sha256)")
+        sqlite_path = os.path.join(db_dir, "database.sqlite")
+        conn = sqlite3.connect(sqlite_path)
+        table_exists = (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
+            ).fetchone()
+            is not None
+        )
+        if args.keep and table_exists:
+            df.to_sql("files", conn, if_exists="append", index=False)
+        else:
+            df.to_sql("files", conn, if_exists="replace", index=False)
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sha256 ON files(sha256)"
+            )
         conn.close()
 
     print(f"\n총 {len(results)}개 파일 수집 완료.")
