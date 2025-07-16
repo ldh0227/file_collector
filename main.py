@@ -1,0 +1,170 @@
+import argparse
+import os
+import shutil
+import hashlib
+import magic
+import pefile
+from elftools.elf.elffile import ELFFile
+from tqdm import tqdm
+import pandas as pd
+import sqlite3
+import math
+
+
+def calc_entropy(filepath):
+    with open(filepath, "rb") as f:
+        data = f.read()
+    if not data:
+        return 0.0
+    occurences = [0] * 256
+    for byte in data:
+        occurences[byte] += 1
+    entropy = 0
+    for count in occurences:
+        if count == 0:
+            continue
+        p = count / len(data)
+        entropy -= p * math.log2(p)
+    return entropy
+
+
+def get_file_hashes(filepath):
+    md5 = hashlib.md5()
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while chunk := f.read(8192):
+            md5.update(chunk)
+            sha256.update(chunk)
+    return md5.hexdigest(), sha256.hexdigest()
+
+
+def is_pe(filepath):
+    try:
+        pe = pefile.PE(filepath)
+        return True
+    except:
+        return False
+
+
+def is_elf(filepath):
+    try:
+        with open(filepath, "rb") as f:
+            ELFFile(f)
+        return True
+    except:
+        return False
+
+
+def get_pe_info(filepath):
+    try:
+        pe = pefile.PE(filepath)
+        return {
+            "pe_machine": hex(pe.FILE_HEADER.Machine),
+            "pe_entrypoint": hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint),
+            "pe_sections": len(pe.sections),
+        }
+    except:
+        return {}
+
+
+def get_elf_info(filepath):
+    try:
+        with open(filepath, "rb") as f:
+            elf = ELFFile(f)
+            return {
+                "elf_entrypoint": hex(elf.header["e_entry"]),
+                "elf_sections": elf.num_sections(),
+            }
+    except:
+        return {}
+
+
+def collect_files(paths, only_exec):
+    file_list = []
+    for path in paths:
+        if os.path.isfile(path):
+            file_list.append(path)
+        else:
+            for root, _, files in os.walk(path):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    if only_exec:
+                        if is_pe(full_path) or is_elf(full_path):
+                            file_list.append(full_path)
+                    else:
+                        file_list.append(full_path)
+    return file_list
+
+
+def save_file(src, sha256, binaries_dir):
+    subdir = os.path.join(binaries_dir, sha256[:2])
+    os.makedirs(subdir, exist_ok=True)
+    dst = os.path.join(subdir, sha256)
+    shutil.copy2(src, dst)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("paths", nargs="+", help="수집할 경로(들)")
+    parser.add_argument(
+        "--no-collect", action="store_true", help="파일 자체 수집 비활성화"
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="전체 파일 수집 (기본: 실행파일만)"
+    )
+    parser.add_argument(
+        "--db", choices=["csv", "sqlite"], default="csv", help="정보 저장 방식"
+    )
+    args = parser.parse_args()
+
+    binaries_dir = os.path.join(os.path.dirname(__file__), "binaries")
+    db_dir = os.path.join(os.path.dirname(__file__), "database")
+    os.makedirs(db_dir, exist_ok=True)
+    if not args.no_collect:
+        os.makedirs(binaries_dir, exist_ok=True)
+
+    files = collect_files(args.paths, only_exec=not args.all)
+    results = []
+
+    for filepath in tqdm(files, desc="파일 수집 중"):
+        try:
+            md5, sha256 = get_file_hashes(filepath)
+            filetype = magic.from_file(filepath)
+            entropy = calc_entropy(filepath)
+            info = {
+                "filepath": filepath,
+                "filename": os.path.basename(filepath),
+                "filetype": filetype,
+                "md5": md5,
+                "sha256": sha256,
+                "entropy": entropy,
+            }
+            if is_pe(filepath):
+                info["type"] = "PE"
+                info.update(get_pe_info(filepath))
+            elif is_elf(filepath):
+                info["type"] = "ELF"
+                info.update(get_elf_info(filepath))
+            else:
+                info["type"] = filetype  # magic에서 추출한 실제 파일 타입명 사용
+            results.append(info)
+            if not args.no_collect:
+                save_file(filepath, sha256, binaries_dir)
+        except Exception as e:
+            print(f"에러: {filepath} - {e}")
+
+    df = pd.DataFrame(results)
+    if args.db == "csv":
+        df.to_csv(os.path.join(db_dir, "database.csv"), index=False)
+    else:
+        conn = sqlite3.connect(os.path.join(db_dir, "database.sqlite"))
+        df.to_sql("files", conn, if_exists="replace", index=False)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sha256 ON files(sha256)")
+        conn.close()
+
+    print(f"\n총 {len(results)}개 파일 수집 완료.")
+    print(df["type"].value_counts())
+
+
+if __name__ == "__main__":
+    main()
