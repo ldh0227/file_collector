@@ -130,18 +130,31 @@ def main():
     results = []
 
     for filepath in tqdm(files, desc="파일 수집 중"):
+        info = {
+            "filepath": filepath,
+            "filename": os.path.basename(filepath),
+        }
         try:
             md5, sha256 = get_file_hashes(filepath)
+            info["md5"] = md5
+            info["sha256"] = sha256
+        except Exception as e:
+            info["md5"] = None
+            info["sha256"] = None
+            info["hash_error"] = str(e)
+        try:
             filetype = magic.from_file(filepath)
+            info["filetype"] = filetype
+        except Exception as e:
+            info["filetype"] = None
+            info["filetype_error"] = str(e)
+        try:
             entropy = calc_entropy(filepath)
-            info = {
-                "filepath": filepath,
-                "filename": os.path.basename(filepath),
-                "filetype": filetype,
-                "md5": md5,
-                "sha256": sha256,
-                "entropy": entropy,
-            }
+            info["entropy"] = entropy
+        except Exception as e:
+            info["entropy"] = None
+            info["entropy_error"] = str(e)
+        try:
             if is_pe(filepath):
                 info["type"] = "PE"
                 info.update(get_pe_info(filepath))
@@ -149,12 +162,17 @@ def main():
                 info["type"] = "ELF"
                 info.update(get_elf_info(filepath))
             else:
-                info["type"] = filetype  # magic에서 추출한 실제 파일 타입명 사용
-            results.append(info)
-            if not args.no_collect:
-                save_file(filepath, sha256, binaries_dir)
+                info["type"] = info.get("filetype", "UNKNOWN")
         except Exception as e:
-            print(f"에러: {filepath} - {e}")
+            info["type"] = info.get("filetype", "UNKNOWN")
+            info["type_error"] = str(e)
+        results.append(info)
+        if not args.no_collect:
+            try:
+                if info.get("sha256"):
+                    save_file(filepath, info["sha256"], binaries_dir)
+            except Exception as e:
+                info["save_error"] = str(e)
 
     df = pd.DataFrame(results)
     if args.db == "csv":
