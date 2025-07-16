@@ -228,7 +228,7 @@ def main():
         else:
             df.to_sql("files", conn, if_exists="replace", index=False)
             conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sha256 ON files(sha256)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sha256_path ON files(sha256, filepath)"
             )
         conn.close()
 
